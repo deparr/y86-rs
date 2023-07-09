@@ -46,7 +46,7 @@ impl Display for Flags {
 pub struct Machine {
     mem: Vec<u8>,
     step_mode: StepMode,
-    regs: Vec<usize>,
+    regs: Vec<isize>,
     flags: Flags,
     status: Status,
     cycle: usize,
@@ -69,6 +69,7 @@ enum OpCode {
     Pop,
 }
 
+#[derive(Copy, Clone)]
 enum FunCode {
     Add,
     Sub,
@@ -88,12 +89,12 @@ struct CycleState {
     fun: FunCode,
     r_a: usize,
     r_b: usize,
-    val_c: usize,
+    val_c: isize,
     val_p: usize,
-    val_a: usize,
-    val_b: usize,
-    val_e: usize,
-    val_m: usize,
+    val_a: isize,
+    val_b: isize,
+    val_e: isize,
+    val_m: isize,
     cnd: bool,
 }
 
@@ -125,7 +126,6 @@ impl Machine {
             let colon = match line.find(":") {
                 Some(i) => i,
                 None => {
-                    println!("contd on colon");
                     continue;
                 }
             };
@@ -136,7 +136,6 @@ impl Machine {
             let pipe = match line.find("|") {
                 Some(i) => i,
                 None => {
-                    println!("contd on pipe");
                     continue;
                 }
             };
@@ -171,19 +170,33 @@ impl Machine {
         return Ok(());
     }
 
-    fn get_mem_word(&self, addr: usize) -> Result<usize, anyhow::Error> {
+    fn get_mem_word(&self, addr: usize) -> Result<isize, anyhow::Error> {
         let mut word = 0;
         let wordsize = size_of::<usize>();
         let bytes = match self.mem.get(addr..addr + wordsize) {
             Some(bytes) => bytes,
-            None => anyhow::bail!("Bad addr"),
+            None => anyhow::bail!("get word: bad addr"),
         };
 
         for (i, byte) in bytes.iter().enumerate() {
-            word |= (*byte as usize) << (i << 3);
+            word |= (*byte as isize) << (i << 3);
         }
 
         return Ok(word);
+    }
+
+    fn set_mem_word(&mut self, addr: usize, word: isize) -> Result<(), anyhow::Error> {
+        let wordsize = size_of::<usize>();
+        let bytes = match self.mem.get_mut(addr..addr + wordsize) {
+            Some(bytes) => bytes,
+            None => anyhow::bail!("set word: bad addr"),
+        };
+
+        for (wbyte, mbyte) in word.to_le_bytes().iter().zip(bytes.iter_mut()) {
+            *mbyte = *wbyte
+        }
+
+        Ok(())
     }
 
     fn fetch(&self, state: &mut CycleState) -> Result<(), anyhow::Error> {
@@ -287,37 +300,106 @@ impl Machine {
 
     fn decode(&self, state: &mut CycleState) -> Result<(), anyhow::Error> {
         match state.op {
+            OpCode::Rmmov | OpCode::Opx => {
+                state.val_a = match self.regs.get(state.r_a) {
+                    Some(&val) => val,
+                    None => anyhow::bail!("bad reg in rmmov/opx"),
+                };
+                state.val_b = match self.regs.get(state.r_b) {
+                    Some(&val) => val,
+                    None => anyhow::bail!("bad reg in rmmov/opx"),
+                }
+            }
+            OpCode::Cmov | OpCode::Mrmov => {
+                let (idx, val) = if state.op == OpCode::Cmov {
+                    (state.r_a, &mut state.val_a)
+                } else {
+                    (state.r_b, &mut state.val_b)
+                };
+                *val = match self.regs.get(idx) {
+                    Some(&val) => val,
+                    None => anyhow::bail!("bad reg in cmov/mrmov"),
+                };
+            }
             _ => (),
         }
 
         Ok(())
     }
 
-    fn execute(&self, state: &mut CycleState) -> Result<(), anyhow::Error> {
-        match state.op {
-            OpCode::Irmov => state.val_e = state.val_c,
-            _ => (),
-        }
+    fn execute(&mut self, state: &mut CycleState) -> Result<(), anyhow::Error> {
+        state.val_e = match state.op {
+            OpCode::Irmov => state.val_c,
+            OpCode::Cmov => {
+                if self.cond(state.fun) {
+                    state.val_a
+                } else {
+                    state.val_b
+                }
+            }
+            OpCode::Rmmov | OpCode::Mrmov => state.val_b + state.val_c,
+            OpCode::Opx => {
+                match state.fun {
+                    FunCode::Add => {
+                        let (res, of) = state.val_b.overflowing_add(state.val_a);
+                        self.flags = Flags(res < 0, res == 0, of);
+                        res
+                    },
+                    FunCode::Sub => {
+                        let (res, of) = state.val_b.overflowing_sub(state.val_a);
+                        self.flags = Flags(res < 0, res == 0, of);
+                        res
+                    },
+                    FunCode::And => {
+                        let res = state.val_b & state.val_a;
+                        self.flags = Flags(res < 0, res == 0, false);
+                        res
+                    },
+                    FunCode::Xor => {
+                        let res = state.val_b ^ state.val_a;
+                        self.flags = Flags(res < 0, res == 0, false);
+                        res
+                    },
+                    _ => 0
+                }
+            }
+            OpCode::Jxx => {
+                if state.cnd {
+                    state.val_c
+                } else {
+                    state.val_p as isize
+                }
+            }
+            _ => 0,
+        };
 
         Ok(())
     }
 
     fn memory(&mut self, state: &mut CycleState) -> Result<(), anyhow::Error> {
         match state.op {
+            OpCode::Rmmov => self.set_mem_word(state.val_e as usize, state.val_a)?,
+            OpCode::Mrmov => {
+                state.val_m = self.get_mem_word(state.val_e as usize)?;
+            }
             _ => (),
-        }
+        };
 
         Ok(())
     }
 
     fn writeback(&mut self, state: &mut CycleState) -> Result<(), anyhow::Error> {
         match state.op {
-            OpCode::Irmov => match self.regs.get_mut(state.r_b) {
+            OpCode::Irmov | OpCode::Cmov | OpCode::Opx => match self.regs.get_mut(state.r_b) {
                 Some(reg) => *reg = state.val_e,
                 None => anyhow::bail!("bad reg for irmov"),
             },
+            OpCode::Mrmov => match self.regs.get_mut(state.r_a) {
+                Some(reg) => *reg = state.val_m,
+                None => anyhow::bail!("bad reg for mrmov"),
+            },
             _ => (),
-        }
+        };
 
         Ok(())
     }
@@ -327,15 +409,9 @@ impl Machine {
             self.status = Status::Halt;
         }
         self.pc = match state.op {
-            OpCode::Jxx => {
-                if state.cnd {
-                    state.val_c
-                } else {
-                    state.val_p
-                }
-            }
-            OpCode::Ret => state.val_m,
-            OpCode::Call => state.val_c,
+            OpCode::Jxx => state.val_e as usize,
+            OpCode::Ret => state.val_m as usize,
+            OpCode::Call => state.val_c as usize,
             _ => state.val_p,
         };
 
@@ -418,6 +494,22 @@ impl Machine {
         }
 
         return str;
+    }
+
+    fn cond(&self, fun: FunCode) -> bool {
+        let sf = self.flags.0;
+        let zf = self.flags.1;
+        let of = self.flags.2;
+        return match fun {
+            FunCode::Ucnd => true,
+            FunCode::Lte => (sf ^ of) || zf,
+            FunCode::Lt => sf ^ of,
+            FunCode::Eq => zf,
+            FunCode::Neq => !zf,
+            FunCode::Gte => !(sf ^ of) & !zf,
+            FunCode::Gt => !(sf ^ of),
+            _ => false,
+        };
     }
 }
 
