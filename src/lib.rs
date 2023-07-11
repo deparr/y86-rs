@@ -1,5 +1,8 @@
 use core::mem::size_of;
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    io::{self, Read},
+};
 
 const REG_NAMES: [&str; 15] = [
     "%rax", "%rcx", "%rdx", "%rbx", "%rsp", "%rbp", "%rsi", "%rdi", "%r08", "%r09", "%r10", "%r11",
@@ -7,7 +10,18 @@ const REG_NAMES: [&str; 15] = [
 ];
 const RSP: usize = 4;
 
-#[derive(Debug)]
+fn wait_until_key(target: u8) {
+    // this is so bad
+    for byte in io::stdin().lock().bytes() {
+        if let Ok(key) = byte {
+            if key == target {
+                break;
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum StepMode {
     NoStep,
     Stage,
@@ -15,11 +29,32 @@ pub enum StepMode {
     Debug,
 }
 
+pub enum Stage {
+    Fetch,
+    Decode,
+    Execute,
+    Memory,
+    Writeback,
+    PcUpdate,
+}
+
+impl Display for Stage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        return match self {
+            Stage::Fetch => write!(f, "Fetch"),
+            Stage::Decode => write!(f, "Decode"),
+            Stage::Execute => write!(f, "Execute"),
+            Stage::Memory => write!(f, "Memory"),
+            Stage::Writeback => write!(f, "Writeback"),
+            Stage::PcUpdate => write!(f, "PC Update"),
+        };
+    }
+}
+
 #[derive(PartialEq)]
 enum Status {
     Halt,
     Aok,
-    Err,
 }
 
 impl Display for Status {
@@ -27,7 +62,6 @@ impl Display for Status {
         return match self {
             Status::Halt => write!(f, "STAT: HLT"),
             Status::Aok => write!(f, "STAT: AOK"),
-            Status::Err => write!(f, "STAT: ERR"),
         };
     }
 }
@@ -69,6 +103,25 @@ enum OpCode {
     Pop,
 }
 
+impl Display for OpCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        return match self {
+            OpCode::Halt => write!(f, "halt"),
+            OpCode::Nop => write!(f, "nop"),
+            OpCode::Cmov => write!(f, "cmov"),
+            OpCode::Irmov => write!(f, "irmov"),
+            OpCode::Rmmov => write!(f, "rmmov"),
+            OpCode::Mrmov => write!(f, "mrmov"),
+            OpCode::Opx => write!(f, "op"),
+            OpCode::Jxx => write!(f, "jmp"),
+            OpCode::Call => write!(f, "call"),
+            OpCode::Ret => write!(f, "ret"),
+            OpCode::Push => write!(f, "push"),
+            OpCode::Pop => write!(f, "pop"),
+        };
+    }
+}
+
 #[derive(Copy, Clone)]
 enum FunCode {
     Add,
@@ -82,6 +135,26 @@ enum FunCode {
     Neq,
     Gte,
     Gt,
+    None,
+}
+
+impl Display for FunCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        return match self {
+            FunCode::Add => write!(f, "add"),
+            FunCode::Sub => write!(f, "sub"),
+            FunCode::And => write!(f, "and"),
+            FunCode::Xor => write!(f, "xor"),
+            FunCode::Ucnd => write!(f, "ucnd"),
+            FunCode::Lte => write!(f, "lte"),
+            FunCode::Lt => write!(f, "lt"),
+            FunCode::Eq => write!(f, "eq"),
+            FunCode::Neq => write!(f, "neq"),
+            FunCode::Gte => write!(f, "gte"),
+            FunCode::Gt => write!(f, "gt"),
+            FunCode::None => write!(f, "none"),
+        };
+    }
 }
 
 struct CycleState {
@@ -199,6 +272,7 @@ impl Machine {
         Ok(())
     }
 
+    // Todo maybe fetch returns the CycleState Object??? would make more sense
     fn fetch(&self, state: &mut CycleState) -> Result<(), anyhow::Error> {
         let (code, fun) = match self.mem.get(self.pc) {
             Some(byte) => (byte / 16, byte & 0x0f),
@@ -226,6 +300,10 @@ impl Machine {
                     5 => FunCode::Gte,
                     6 => FunCode::Gt,
                     _ => anyhow::bail!("bad ifun for cmov"),
+                };
+                (state.r_a, state.r_b) = match self.mem.get(self.pc + 1) {
+                    Some(byte) => ((byte / 16) as usize, (byte & 0x0f) as usize),
+                    None => anyhow::bail!("bad addr"),
                 };
             }
             3 => {
@@ -277,20 +355,33 @@ impl Machine {
                     6 => FunCode::Gt,
                     _ => anyhow::bail!("bad ifun for jxx"),
                 };
-                state.val_p = self.pc + 2;
-            }
-            8 | 0xa => {
-                state.op = if code == 8 {
-                    OpCode::Call
-                } else {
-                    OpCode::Push
-                };
-                state.val_c = self.get_mem_word(self.pc + 2)?;
+                state.val_c = self.get_mem_word(self.pc + 1)?;
                 state.val_p = self.pc + 9;
             }
-            9 | 0xb => {
-                state.op = if code == 9 { OpCode::Ret } else { OpCode::Pop };
+            8 => {
+                state.op = OpCode::Call;
+                state.val_c = self.get_mem_word(self.pc + 1)?;
+                state.val_p = self.pc + 9;
+            }
+            9 => {
+                state.op = OpCode::Ret;
                 state.val_p = self.pc + 1;
+            }
+            0xa => {
+                state.op = OpCode::Push;
+                (state.r_a, state.r_b) = match self.mem.get(self.pc + 1) {
+                    Some(byte) => ((byte / 16) as usize, (byte & 0x0f) as usize),
+                    None => anyhow::bail!("bad addr"),
+                };
+                state.val_p = self.pc + 2;
+            }
+            0xb => {
+                state.op = OpCode::Pop;
+                (state.r_a, state.r_b) = match self.mem.get(self.pc + 1) {
+                    Some(byte) => ((byte / 16) as usize, (byte & 0x0f) as usize),
+                    None => anyhow::bail!("bad addr"),
+                };
+                state.val_p = self.pc + 2;
             }
             _ => anyhow::bail!("bad icode"),
         }
@@ -300,7 +391,7 @@ impl Machine {
 
     fn decode(&self, state: &mut CycleState) -> Result<(), anyhow::Error> {
         match state.op {
-            OpCode::Rmmov | OpCode::Opx => {
+            OpCode::Rmmov | OpCode::Opx | OpCode::Cmov => {
                 state.val_a = match self.regs.get(state.r_a) {
                     Some(&val) => val,
                     None => anyhow::bail!("bad reg in rmmov/opx"),
@@ -310,17 +401,38 @@ impl Machine {
                     None => anyhow::bail!("bad reg in rmmov/opx"),
                 }
             }
-            OpCode::Cmov | OpCode::Mrmov => {
-                let (idx, val) = if state.op == OpCode::Cmov {
-                    (state.r_a, &mut state.val_a)
-                } else {
-                    (state.r_b, &mut state.val_b)
-                };
+            OpCode::Mrmov => {
+                let (idx, val) = (state.r_b, &mut state.val_b);
                 *val = match self.regs.get(idx) {
                     Some(&val) => val,
                     None => anyhow::bail!("bad reg in cmov/mrmov"),
                 };
             }
+            OpCode::Call => {
+                state.val_b = match self.regs.get(RSP) {
+                    Some(&val) => val,
+                    None => anyhow::bail!("bad reg in call"),
+                };
+            }
+            OpCode::Ret | OpCode::Pop => {
+                let rsp = match self.regs.get(RSP) {
+                    Some(&val) => val,
+                    None => anyhow::bail!("bad reg in ret/pop"),
+                };
+                state.val_b = rsp;
+                state.val_a = rsp;
+            }
+            OpCode::Push => {
+                state.val_a = match self.regs.get(state.r_a) {
+                    Some(&val) => val,
+                    None => anyhow::bail!("bad reg in push"),
+                };
+                state.val_b = match self.regs.get(RSP) {
+                    Some(&val) => val,
+                    None => anyhow::bail!("bad reg in push"),
+                };
+            }
+
             _ => (),
         }
 
@@ -331,45 +443,47 @@ impl Machine {
         state.val_e = match state.op {
             OpCode::Irmov => state.val_c,
             OpCode::Cmov => {
-                if self.cond(state.fun) {
+                state.cnd = self.cond(state.fun);
+                if state.cnd {
                     state.val_a
                 } else {
                     state.val_b
                 }
             }
             OpCode::Rmmov | OpCode::Mrmov => state.val_b + state.val_c,
-            OpCode::Opx => {
-                match state.fun {
-                    FunCode::Add => {
-                        let (res, of) = state.val_b.overflowing_add(state.val_a);
-                        self.flags = Flags(res < 0, res == 0, of);
-                        res
-                    },
-                    FunCode::Sub => {
-                        let (res, of) = state.val_b.overflowing_sub(state.val_a);
-                        self.flags = Flags(res < 0, res == 0, of);
-                        res
-                    },
-                    FunCode::And => {
-                        let res = state.val_b & state.val_a;
-                        self.flags = Flags(res < 0, res == 0, false);
-                        res
-                    },
-                    FunCode::Xor => {
-                        let res = state.val_b ^ state.val_a;
-                        self.flags = Flags(res < 0, res == 0, false);
-                        res
-                    },
-                    _ => 0
+            OpCode::Opx => match state.fun {
+                FunCode::Add => {
+                    let (res, of) = state.val_b.overflowing_add(state.val_a);
+                    self.flags = Flags(res < 0, res == 0, of);
+                    res
                 }
-            }
+                FunCode::Sub => {
+                    let (res, of) = state.val_b.overflowing_sub(state.val_a);
+                    self.flags = Flags(res < 0, res == 0, of);
+                    res
+                }
+                FunCode::And => {
+                    let res = state.val_b & state.val_a;
+                    self.flags = Flags(res < 0, res == 0, false);
+                    res
+                }
+                FunCode::Xor => {
+                    let res = state.val_b ^ state.val_a;
+                    self.flags = Flags(res < 0, res == 0, false);
+                    res
+                }
+                _ => anyhow::bail!("bad fun for Opx"),
+            },
             OpCode::Jxx => {
+                state.cnd = self.cond(state.fun);
                 if state.cnd {
                     state.val_c
                 } else {
                     state.val_p as isize
                 }
             }
+            OpCode::Call | OpCode::Push => state.val_b - 8,
+            OpCode::Ret | OpCode::Pop => state.val_b + 8,
             _ => 0,
         };
 
@@ -382,6 +496,10 @@ impl Machine {
             OpCode::Mrmov => {
                 state.val_m = self.get_mem_word(state.val_e as usize)?;
             }
+            // LEFT OFF HERE FOR CALL/RET/PUSH/POP
+            OpCode::Call => self.set_mem_word(state.val_e as usize, state.val_p as isize)?,
+            OpCode::Push => self.set_mem_word(state.val_e as usize, state.val_a)?,
+            OpCode::Ret | OpCode::Pop => state.val_m = self.get_mem_word(state.val_a as usize)?,
             _ => (),
         };
 
@@ -398,6 +516,20 @@ impl Machine {
                 Some(reg) => *reg = state.val_m,
                 None => anyhow::bail!("bad reg for mrmov"),
             },
+            OpCode::Call | OpCode::Ret | OpCode::Push => match self.regs.get_mut(RSP) {
+                Some(reg) => *reg = state.val_e,
+                None => anyhow::bail!("bad reg for call/ret/push"),
+            },
+            OpCode::Pop => {
+                match self.regs.get_mut(state.r_a) {
+                    Some(reg) => *reg = state.val_a,
+                    None => anyhow::bail!("bad reg for pop"),
+                };
+                match self.regs.get_mut(RSP) {
+                    Some(reg) => *reg = state.val_e,
+                    None => anyhow::bail!("bad reg for mrmov"),
+                };
+            }
             _ => (),
         };
 
@@ -422,13 +554,16 @@ impl Machine {
         // use match and loop?
         while self.status == Status::Aok {
             match self.step_mode {
-                StepMode::Stage | StepMode::Cycle => println!("{}", self),
+                StepMode::Stage | StepMode::Cycle => {
+                    println!("{}", self);
+                    wait_until_key(0x0a);
+                }
                 _ => (),
-            };
+            }
 
             let mut cycle_state = CycleState {
                 op: OpCode::Halt,
-                fun: FunCode::Add,
+                fun: FunCode::None,
                 r_a: 0,
                 r_b: 0,
                 val_c: 0,
@@ -441,11 +576,22 @@ impl Machine {
             };
 
             self.fetch(&mut cycle_state)?;
+            self.do_step(Stage::Fetch, &cycle_state);
+
             self.decode(&mut cycle_state)?;
+            self.do_step(Stage::Decode, &cycle_state);
+
             self.execute(&mut cycle_state)?;
+            self.do_step(Stage::Execute, &cycle_state);
+
             self.memory(&mut cycle_state)?;
+            self.do_step(Stage::Memory, &cycle_state);
+
             self.writeback(&mut cycle_state)?;
+            self.do_step(Stage::Writeback, &cycle_state);
+
             self.pc_update(&mut cycle_state)?;
+            self.do_step(Stage::PcUpdate, &cycle_state);
 
             self.cycle += 1;
         }
@@ -488,7 +634,7 @@ impl Machine {
     fn format_regs(&self) -> String {
         let mut str = String::new();
         for (i, val) in self.regs.iter().enumerate() {
-            if *val > 0 {
+            if *val != 0 {
                 str.push_str(&format!("{}: 0x{:016x}\n", REG_NAMES[i], val));
             }
         }
@@ -506,10 +652,36 @@ impl Machine {
             FunCode::Lt => sf ^ of,
             FunCode::Eq => zf,
             FunCode::Neq => !zf,
-            FunCode::Gte => !(sf ^ of) & !zf,
+            FunCode::Gte => !(sf ^ of) && zf,
             FunCode::Gt => !(sf ^ of),
             _ => false,
         };
+    }
+
+    fn do_step(&self, stage: Stage, state: &CycleState) {
+        if self.step_mode == StepMode::Stage {
+            println!(
+                r#"{}:
+icode:ifun = {}:{} rA:rB = {:x}:{:x}
+valC = 0x{:016x} valP = 0x{:016x}
+valA = 0x{:016x} valB = 0x{:016x}
+valE = 0x{:016x} valM = 0x{:016x}
+Cnd = {}"#,
+                stage,
+                state.op,
+                state.fun,
+                state.r_a,
+                state.r_b,
+                state.val_c,
+                state.val_p,
+                state.val_a,
+                state.val_b,
+                state.val_e,
+                state.val_m,
+                state.cnd
+            );
+            wait_until_key(0x0a);
+        }
     }
 }
 
