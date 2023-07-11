@@ -4,7 +4,7 @@
 
 A terribly structured and not-at-all-idiomatic implementation of the y86 assembly language described in [this textbook](https://csapp.cs.cmu.edu/).  
 
-I originally did this as a class project in C.
+This particular implementation is based on a class project I did in C.
 
 ## Usage
 y86 'object' files are expected as input, which take the following form:
@@ -25,6 +25,12 @@ would produce the following object file:
 0x0003: 6300                   | xorq %rax, %rax
 0x0005: 00                     | halt
 ```
+There are also examples in [yo-files/](/yo-files)
+
+### Options
+`-c` will stop and print the machine state between every cycle, press Return to advance the machine.
+
+`-s` has the effect of `-c` and also stops in between stages of each cycle, press Return to advance.
 
 You can also use an [online simulator](https://boginw.github.io/js-y86-64/) to produce object code, though leaving breakpoints in the object code will result in errors.  
 
