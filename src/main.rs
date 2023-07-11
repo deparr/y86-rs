@@ -5,7 +5,7 @@ const MEM_MAX: usize = 1 << 13;
 
 fn parse_args() -> (String, StepMode) {
     let mut args: Vec<String> = env::args().skip(1).collect();
-    if args.len() < 1 {
+    if args.is_empty() {
         todo!("handle arg error");
     }
     let file = args.remove(0);
@@ -20,7 +20,7 @@ fn parse_args() -> (String, StepMode) {
         StepMode::NoStep
     };
 
-    return (file, step_mode);
+    (file, step_mode)
 }
 
 fn main() -> Result<(), anyhow::Error> {
@@ -28,7 +28,6 @@ fn main() -> Result<(), anyhow::Error> {
     let infile = fs::read_to_string(infile)?;
     let mut machine = Machine::new(MEM_MAX, mode);
     machine.load(infile)?;
-    // todo fix this crap
     match machine.run() {
         Ok(_) =>  print!("{machine}"),
         Err(e) => return Err(e),

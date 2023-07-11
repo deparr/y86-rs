@@ -12,11 +12,9 @@ const RSP: usize = 4;
 
 fn wait_until_key(target: u8) {
     // this is so bad
-    for byte in io::stdin().lock().bytes() {
-        if let Ok(key) = byte {
-            if key == target {
-                break;
-            }
+    for byte in io::stdin().lock().bytes().flatten() {
+        if byte == target {
+            break;
         }
     }
 }
@@ -40,14 +38,14 @@ pub enum Stage {
 
 impl Display for Stage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        return match self {
+        match self {
             Stage::Fetch => write!(f, "Fetch"),
             Stage::Decode => write!(f, "Decode"),
             Stage::Execute => write!(f, "Execute"),
             Stage::Memory => write!(f, "Memory"),
             Stage::Writeback => write!(f, "Writeback"),
             Stage::PcUpdate => write!(f, "PC Update"),
-        };
+        }
     }
 }
 
@@ -59,10 +57,10 @@ enum Status {
 
 impl Display for Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        return match self {
+        match self {
             Status::Halt => write!(f, "STAT: HLT"),
             Status::Aok => write!(f, "STAT: AOK"),
-        };
+        }
     }
 }
 
@@ -73,7 +71,7 @@ impl Display for Flags {
         let sf = if self.0 { 1 } else { 0 };
         let zf = if self.1 { 1 } else { 0 };
         let of = if self.2 { 1 } else { 0 };
-        return write!(f, "SF: {}\tZF: {}\tOF: {}", sf, zf, of);
+        write!(f, "SF: {}\tZF: {}\tOF: {}", sf, zf, of)
     }
 }
 
@@ -105,7 +103,7 @@ enum OpCode {
 
 impl Display for OpCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        return match self {
+        match self {
             OpCode::Halt => write!(f, "halt"),
             OpCode::Nop => write!(f, "nop"),
             OpCode::Cmov => write!(f, "cmov"),
@@ -118,7 +116,7 @@ impl Display for OpCode {
             OpCode::Ret => write!(f, "ret"),
             OpCode::Push => write!(f, "push"),
             OpCode::Pop => write!(f, "pop"),
-        };
+        }
     }
 }
 
@@ -140,7 +138,7 @@ enum FunCode {
 
 impl Display for FunCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        return match self {
+        match self {
             FunCode::Add => write!(f, "add"),
             FunCode::Sub => write!(f, "sub"),
             FunCode::And => write!(f, "and"),
@@ -153,7 +151,7 @@ impl Display for FunCode {
             FunCode::Gte => write!(f, "gte"),
             FunCode::Gt => write!(f, "gt"),
             FunCode::None => write!(f, "none"),
-        };
+        }
     }
 }
 
@@ -196,7 +194,7 @@ impl Machine {
             if !line.starts_with("0x") {
                 continue;
             }
-            let colon = match line.find(":") {
+            let colon = match line.find(':') {
                 Some(i) => i,
                 None => {
                     continue;
@@ -206,7 +204,7 @@ impl Machine {
             let addr_str = line.get(2..colon).unwrap();
             let mut addr = usize::from_str_radix(addr_str, 16)?;
 
-            let pipe = match line.find("|") {
+            let pipe = match line.find('|') {
                 Some(i) => i,
                 None => {
                     continue;
@@ -240,7 +238,7 @@ impl Machine {
             }
             //println!("{:02x?} ||| {}", self.mem.get(addrs..addr), line);
         }
-        return Ok(());
+        Ok(())
     }
 
     fn get_mem_word(&self, addr: usize) -> Result<isize, anyhow::Error> {
@@ -255,7 +253,7 @@ impl Machine {
             word |= (*byte as isize) << (i << 3);
         }
 
-        return Ok(word);
+        Ok(word)
     }
 
     fn set_mem_word(&mut self, addr: usize, word: isize) -> Result<(), anyhow::Error> {
@@ -596,7 +594,7 @@ impl Machine {
             self.cycle += 1;
         }
 
-        return Ok(());
+        Ok(())
     }
 
     fn format_mem(&self) -> String {
@@ -628,7 +626,7 @@ impl Machine {
             ));
         }
 
-        return str;
+        str
     }
 
     fn format_regs(&self) -> String {
@@ -639,14 +637,14 @@ impl Machine {
             }
         }
 
-        return str;
+        str
     }
 
     fn cond(&self, fun: FunCode) -> bool {
         let sf = self.flags.0;
         let zf = self.flags.1;
         let of = self.flags.2;
-        return match fun {
+        match fun {
             FunCode::Ucnd => true,
             FunCode::Lte => (sf ^ of) || zf,
             FunCode::Lt => sf ^ of,
@@ -655,7 +653,7 @@ impl Machine {
             FunCode::Gte => !(sf ^ of) && zf,
             FunCode::Gt => !(sf ^ of),
             _ => false,
-        };
+        }
     }
 
     fn do_step(&self, stage: Stage, state: &CycleState) {
@@ -692,6 +690,6 @@ impl Display for Machine {
         writeln!(f, "{}", self.format_regs())?;
         writeln!(f, "{}", self.flags)?;
         writeln!(f, "{}", self.status)?;
-        return writeln!(f, "PC: 0x{:04x}", self.pc);
+        writeln!(f, "PC: 0x{:04x}", self.pc)
     }
 }
