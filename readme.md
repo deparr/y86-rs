@@ -32,5 +32,5 @@ There are also examples in [yo-files/](/yo-files)
 
 `-s` has the effect of `-c` and also stops in between stages of each cycle, press Return to advance.
 
-You can also use an [online simulator](https://boginw.github.io/js-y86-64/) to produce object code, though leaving breakpoints in the object code will result in errors.  
+You can also use an [online simulator](https://boginw.github.io/js-y86-64/) to produce object code, though not all instructions are supported (breakpoints in particular).  
 
