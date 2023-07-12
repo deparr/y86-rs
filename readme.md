@@ -7,9 +7,10 @@ A terribly structured and not-at-all-idiomatic implementation of the y86 assembl
 This particular implementation is based on a class project I did in C.
 
 ## Usage
-y86 'object' files are expected as input, which take the following form:
+y86 'object' files are expected as input, where each line takes the following form:
 ```
 <ADDRESS>: <BYTE ENCODING> | <READABLE ASM>
+    ...
 ```
 For example, the following y86 asm...  
 ```
