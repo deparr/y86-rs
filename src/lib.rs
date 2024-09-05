@@ -236,7 +236,6 @@ impl Machine {
                 i += 2;
                 addr += 1;
             }
-            //println!("{:02x?} ||| {}", self.mem.get(addrs..addr), line);
         }
         Ok(())
     }
@@ -270,7 +269,6 @@ impl Machine {
         Ok(())
     }
 
-    // Todo maybe fetch returns the CycleState Object??? would make more sense
     fn fetch(&self, state: &mut CycleState) -> Result<(), anyhow::Error> {
         let (code, fun) = match self.mem.get(self.pc) {
             Some(byte) => (byte / 16, byte & 0x0f),
@@ -494,7 +492,6 @@ impl Machine {
             OpCode::Mrmov => {
                 state.val_m = self.get_mem_word(state.val_e as usize)?;
             }
-            // LEFT OFF HERE FOR CALL/RET/PUSH/POP
             OpCode::Call => self.set_mem_word(state.val_e as usize, state.val_p as isize)?,
             OpCode::Push => self.set_mem_word(state.val_e as usize, state.val_a)?,
             OpCode::Ret | OpCode::Pop => state.val_m = self.get_mem_word(state.val_a as usize)?,
@@ -549,7 +546,6 @@ impl Machine {
     }
 
     pub fn run(&mut self) -> Result<(), anyhow::Error> {
-        // use match and loop?
         while self.status == Status::Aok {
             match self.step_mode {
                 StepMode::Stage | StepMode::Cycle => {
