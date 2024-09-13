@@ -2,7 +2,7 @@
     <h2 align="center">Y86-64 Interpreter</h2>
 </p>
 
-A terribly structured and not-at-all-idiomatic implementation of the y86 assembly language described in [this textbook](https://csapp.cs.cmu.edu/).  
+A not very idiomatic interpreter of the y86-64 assembly language described in [this textbook](https://csapp.cs.cmu.edu/).  
 
 This particular implementation is based on a class project I did in C.
 
